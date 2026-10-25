@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mech Merge</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="game">
+    <header>
+      <h1>Mech Merge</h1>
+      <div class="stats">
+        <div>Turns <strong id="turns">0</strong></div>
+        <div>Score <strong id="score">0</strong></div>
+        <div>Merges <strong id="merges">0</strong></div>
+      </div>
+    </header>
+
+    <div id="board" class="board"></div>
+
+    <div class="controls">
+      <button id="deploy-btn" type="button">Deploy Mech (1 turn)</button>
+    </div>
+
+    <p id="message" class="message"></p>
+
+    <details class="guide">
+      <summary>How to play</summary>
+      <ul>
+        <li>Click a mech, then click another cell to move, swap, or merge.</li>
+        <li>Two mechs of the same tier merge into the next tier.</li>
+        <li>Every action costs one turn.</li>
+        <li>Build a <strong>Titan</strong> (tier 6) before turns run out to win.</li>
+      </ul>
+    </details>
+  </main>
+
+  <div id="overlay" class="overlay hidden">
+    <div class="overlay-box">
+      <h2 id="overlay-title"></h2>
+      <p id="overlay-text"></p>
+      <button id="restart-btn" type="button">Play Again</button>
+    </div>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>

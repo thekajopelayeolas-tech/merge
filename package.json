@@ -1,0 +1,11 @@
+{
+  "name": "mech-merge",
+  "version": "1.0.0",
+  "description": "A mech merging puzzle game",
+  "main": "game.js",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  },
+  "license": "MIT"
+}
