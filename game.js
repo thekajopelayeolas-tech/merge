@@ -152,22 +152,45 @@ function createMechUnits(board) {
 
 function createEnemies(level) {
   const { hp, attack } = enemyStats(level);
-  return Array.from({ length: enemyCount(level) }, () => ({ hp, attack }));
+  return Array.from({ length: enemyCount(level) }, (_, index) => ({ index, hp, attack }));
 }
 
 // Each round both sides strike at once. Your army focuses the front enemy,
 // and the enemies focus your front mech. Extra damage on a dead target is wasted.
 // Every round deals damage, so the loop always ends.
+// Returns one entry per round listing every shot and any unit that fell,
+// so the UI can replay the exact fight.
 function simulateBattle(mechUnits, enemies) {
+  const rounds = [];
   for (;;) {
     const liveMechs = mechUnits.filter((unit) => unit.hp > 0);
     const liveEnemies = enemies.filter((enemy) => enemy.hp > 0);
-    if (liveMechs.length === 0 || liveEnemies.length === 0) return;
+    if (liveMechs.length === 0 || liveEnemies.length === 0) return rounds;
 
+    const enemyTarget = liveEnemies[0];
+    const mechTarget = liveMechs[0];
     const damageToEnemy = liveMechs.reduce((sum, unit) => sum + unit.attack, 0);
     const damageToMech = liveEnemies.reduce((sum, enemy) => sum + enemy.attack, 0);
-    liveEnemies[0].hp -= damageToEnemy;
-    liveMechs[0].hp -= damageToMech;
+
+    const shots = [
+      ...liveMechs.map((unit) => ({
+        from: { side: 'mech', index: unit.index },
+        to: { side: 'enemy', index: enemyTarget.index },
+        damage: unit.attack,
+      })),
+      ...liveEnemies.map((enemy) => ({
+        from: { side: 'enemy', index: enemy.index },
+        to: { side: 'mech', index: mechTarget.index },
+        damage: enemy.attack,
+      })),
+    ];
+
+    enemyTarget.hp -= damageToEnemy;
+    mechTarget.hp -= damageToMech;
+    const downs = [];
+    if (enemyTarget.hp <= 0) downs.push({ side: 'enemy', index: enemyTarget.index });
+    if (mechTarget.hp <= 0) downs.push({ side: 'mech', index: mechTarget.index });
+    rounds.push({ shots, downs });
   }
 }
 
@@ -181,7 +204,7 @@ function startBattle(state) {
   }
 
   const enemies = createEnemies(state.level);
-  simulateBattle(mechUnits, enemies);
+  const rounds = simulateBattle(mechUnits, enemies);
 
   const kills = enemies.filter((enemy) => enemy.hp <= 0).length;
   const losses = mechUnits.filter((unit) => unit.hp <= 0).length;
@@ -192,7 +215,7 @@ function startBattle(state) {
 
   state.turnsLeft += kills;
   const won = kills === enemies.length;
-  const battle = { level: state.level, kills, losses, won };
+  const battle = { level: state.level, enemyCount: enemies.length, kills, losses, won, rounds };
   state.lastBattle = battle;
 
   if (!won) {
@@ -207,6 +230,9 @@ function startBattle(state) {
 
 if (typeof document !== 'undefined') {
   const boardEl = document.getElementById('board');
+  const arenaEl = document.getElementById('arena');
+  const enemiesEl = document.getElementById('enemies');
+  const fxEl = document.getElementById('fx');
   const levelEl = document.getElementById('level');
   const turnsEl = document.getElementById('turns');
   const scoreEl = document.getElementById('score');
@@ -219,8 +245,17 @@ if (typeof document !== 'undefined') {
   const overlayText = document.getElementById('overlay-text');
   const restartBtn = document.getElementById('restart-btn');
 
+  const SHOT_MS = 380; // flight time of one projectile
+  const ROUND_GAP_MS = 250; // pause between rounds
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
   let state = createGame();
   let selected = null;
+  let busy = false; // true while a battle is playing back
+  let displayBoard = null; // pre-battle board shown during playback
+  let mechHp = {}; // { [boardIndex]: { hp, max } } during playback
+  let enemyHp = []; // current hp of each enemy during playback
+  let enemyMax = 0;
 
   function setMessage(text, isError = false) {
     messageEl.textContent = text;
@@ -242,7 +277,7 @@ if (typeof document !== 'undefined') {
   }
 
   function onCellClick(index) {
-    if (state.status !== 'playing') return;
+    if (busy || state.status !== 'playing') return;
     if (selected === null) {
       if (state.board[index]) {
         selected = index;
@@ -257,9 +292,23 @@ if (typeof document !== 'undefined') {
   }
 
   function onDrop(from, to) {
-    if (state.status !== 'playing' || from === to) return;
+    if (busy || state.status !== 'playing' || from === to) return;
     attemptMove(from, to);
     render();
+  }
+
+  function percent(hp, max) {
+    return Math.max(0, Math.min(100, (hp / max) * 100));
+  }
+
+  function createHpBar(hp, max) {
+    const bar = document.createElement('div');
+    bar.className = 'hp-bar';
+    const fill = document.createElement('div');
+    fill.className = 'hp-fill';
+    fill.style.width = `${percent(hp, max)}%`;
+    bar.appendChild(fill);
+    return bar;
   }
 
   function createMechElement(mech, index) {
@@ -278,6 +327,8 @@ if (typeof document !== 'undefined') {
     nameEl.textContent = type.name;
 
     el.append(tierEl, nameEl);
+    const hp = mechHp[index];
+    if (hp) el.appendChild(createHpBar(hp.hp, hp.max));
     el.addEventListener('dragstart', (e) => {
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.setData('text/plain', String(index));
@@ -300,8 +351,178 @@ if (typeof document !== 'undefined') {
     return cell;
   }
 
+  function drawBoard(board) {
+    boardEl.innerHTML = '';
+    board.forEach((mech, index) => {
+      const cell = createCellElement(index);
+      if (mech) cell.appendChild(createMechElement(mech, index));
+      boardEl.appendChild(cell);
+    });
+  }
+
+  function drawEnemies(count, level) {
+    enemiesEl.innerHTML = '';
+    for (let i = 0; i < count; i++) {
+      const card = document.createElement('div');
+      card.className = 'enemy';
+      card.dataset.index = String(i);
+      card.style.animationDelay = `${i * 120}ms`;
+      const name = document.createElement('span');
+      name.className = 'enemy-name';
+      name.textContent = `Drone L${level}`;
+      card.append(name, createHpBar(enemyHp[i], enemyMax));
+      enemiesEl.appendChild(card);
+    }
+  }
+
+  function unitEl(unit) {
+    if (unit.side === 'mech') {
+      const cell = boardEl.children[unit.index];
+      return cell ? cell.querySelector('.mech') : null;
+    }
+    return enemiesEl.querySelector(`[data-index="${unit.index}"]`);
+  }
+
+  function rectCenter(el) {
+    const rect = el.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  }
+
+  // Launches a projectile from one unit toward another. Resolves on impact.
+  function fireShot(fromEl, toEl, side) {
+    const from = rectCenter(fromEl);
+    const to = rectCenter(toEl);
+    const shot = document.createElement('div');
+    shot.className = `shot ${side}-shot`;
+    shot.style.left = `${from.x}px`;
+    shot.style.top = `${from.y}px`;
+    fxEl.appendChild(shot);
+    const flight = shot.animate(
+      [
+        { transform: 'translate(0, 0)' },
+        { transform: `translate(${to.x - from.x}px, ${to.y - from.y}px)` },
+      ],
+      { duration: SHOT_MS, easing: 'linear', fill: 'forwards' }
+    );
+    return flight.finished.then(() => shot.remove());
+  }
+
+  function showDamage(targetEl, damage) {
+    const { x, y } = rectCenter(targetEl);
+    const num = document.createElement('div');
+    num.className = 'dmg';
+    num.textContent = `-${damage}`;
+    num.style.left = `${x + (Math.random() - 0.5) * 30}px`;
+    num.style.top = `${y}px`;
+    fxEl.appendChild(num);
+    num.animate(
+      [
+        { transform: 'translate(-50%, -50%)', opacity: 1 },
+        { transform: 'translate(-50%, -150%)', opacity: 0 },
+      ],
+      { duration: 800, easing: 'ease-out', fill: 'forwards' }
+    ).finished.then(() => num.remove());
+  }
+
+  function hpFill(el, hp, max) {
+    if (!el) return;
+    el.querySelector('.hp-fill').style.width = `${percent(hp, max)}%`;
+  }
+
+  function flash(el) {
+    if (!el) return;
+    el.classList.add('hit');
+    setTimeout(() => el.classList.remove('hit'), 150);
+  }
+
+  function shakeBoard() {
+    boardEl.classList.remove('shake');
+    void boardEl.offsetWidth; // restart the animation
+    boardEl.classList.add('shake');
+  }
+
+  // Updates the stored hp for a shot's target and refreshes its bar.
+  function applyDamage(shot) {
+    const { side, index } = shot.to;
+    if (side === 'enemy') {
+      enemyHp[index] = Math.max(0, enemyHp[index] - shot.damage);
+      hpFill(unitEl(shot.to), enemyHp[index], enemyMax);
+    } else {
+      const hp = mechHp[index];
+      hp.hp = Math.max(0, hp.hp - shot.damage);
+      hpFill(unitEl(shot.to), hp.hp, hp.max);
+    }
+  }
+
+  function showBanner(text) {
+    const el = document.createElement('div');
+    el.className = 'banner';
+    el.textContent = text;
+    fxEl.appendChild(el);
+    el.animate(
+      [
+        { transform: 'translate(-50%, -50%) scale(0.5)', opacity: 0 },
+        { transform: 'translate(-50%, -50%) scale(1)', opacity: 1 },
+      ],
+      { duration: 300, easing: 'ease-out', fill: 'forwards' }
+    );
+    setTimeout(() => el.remove(), 1100);
+  }
+
+  // Plays one round: all shots fly at once, then fallen units fade out.
+  async function playRound(round) {
+    await Promise.all(
+      round.shots.map(async (shot) => {
+        const fromEl = unitEl(shot.from);
+        const toEl = unitEl(shot.to);
+        if (!fromEl || !toEl) return;
+        await fireShot(fromEl, toEl, shot.from.side);
+        applyDamage(shot);
+        flash(toEl);
+        showDamage(toEl, shot.damage);
+        if (shot.to.side === 'mech') shakeBoard();
+      })
+    );
+    round.downs.forEach((unit) => {
+      const el = unitEl(unit);
+      if (el) el.classList.add('dead');
+    });
+    await sleep(ROUND_GAP_MS);
+  }
+
+  // Replays a finished battle on top of the pre-battle board.
+  // The state was already updated by startBattle, so the board is drawn from the snapshot.
+  async function playBattle(snapshot, battle) {
+    busy = true;
+    displayBoard = snapshot;
+    enemyMax = enemyStats(battle.level).hp;
+    enemyHp = Array(battle.enemyCount).fill(enemyMax);
+    mechHp = {};
+    snapshot.forEach((mech, index) => {
+      if (!mech) return;
+      const { hp } = mechStats(mech.tier);
+      mechHp[index] = { hp, max: hp };
+    });
+
+    render();
+    drawEnemies(battle.enemyCount, battle.level);
+    showBanner('FIGHT!');
+    await sleep(900);
+
+    for (const round of battle.rounds) {
+      await playRound(round);
+    }
+
+    await sleep(400);
+    showBanner(battle.won ? 'LEVEL CLEARED' : 'DEFEATED');
+    await sleep(1200);
+    busy = false;
+    displayBoard = null;
+    mechHp = {};
+  }
+
   function renderOverlay() {
-    if (state.status === 'playing') {
+    if (busy || state.status === 'playing') {
       overlayEl.classList.add('hidden');
       return;
     }
@@ -316,19 +537,15 @@ if (typeof document !== 'undefined') {
   }
 
   function render() {
-    boardEl.innerHTML = '';
-    state.board.forEach((mech, index) => {
-      const cell = createCellElement(index);
-      if (mech) cell.appendChild(createMechElement(mech, index));
-      boardEl.appendChild(cell);
-    });
+    drawBoard(displayBoard || state.board);
+    arenaEl.classList.toggle('hidden', !busy);
 
     levelEl.textContent = state.level;
     turnsEl.textContent = state.turnsLeft;
     scoreEl.textContent = state.score;
     mergesEl.textContent = state.merges;
 
-    const playing = state.status === 'playing';
+    const playing = state.status === 'playing' && !busy;
     const boardFull = emptyIndexes(state.board).length === 0;
     const hasMechs = countMechs(state.board) > 0;
     deployBtn.disabled = !playing || boardFull || state.turnsLeft <= 0;
@@ -347,23 +564,28 @@ if (typeof document !== 'undefined') {
     render();
   });
 
-  playBtn.addEventListener('click', () => {
+  playBtn.addEventListener('click', async () => {
+    if (busy) return;
+    // startBattle removes the fallen mechs, so keep the board as it looked before.
+    const snapshot = state.board.slice();
     const result = startBattle(state);
     selected = null;
     if (!result.ok) {
       setMessage(result.reason, true);
-    } else {
-      const { level, kills, losses, won } = result.battle;
-      const bonus = kills === 1 ? '1 turn' : `${kills} turns`;
-      const lossText = losses === 1 ? '1 mech lost' : `${losses} mechs lost`;
-      if (!won) {
-        setMessage(`Level ${level} lost. You destroyed ${kills} enemies and ${lossText}.`, true);
-      } else if (state.status === 'won') {
-        setMessage(`Level ${level} cleared! ${lossText}. Earned ${bonus}.`);
-      } else {
-        setMessage(`Level ${level} cleared! ${lossText}. Earned ${bonus}. Now level ${state.level}.`);
-      }
+      render();
+      return;
     }
+    const { level, kills, losses, won } = result.battle;
+    const bonus = kills === 1 ? '1 turn' : `${kills} turns`;
+    const lossText = losses === 1 ? '1 mech lost' : `${losses} mechs lost`;
+    if (!won) {
+      setMessage(`Level ${level} lost. You destroyed ${kills} enemies and ${lossText}.`, true);
+    } else if (state.status === 'won') {
+      setMessage(`Level ${level} cleared! ${lossText}. Earned ${bonus}.`);
+    } else {
+      setMessage(`Level ${level} cleared! ${lossText}. Earned ${bonus}. Now level ${state.level}.`);
+    }
+    await playBattle(snapshot, result.battle);
     render();
   });
 
@@ -377,6 +599,7 @@ if (typeof document !== 'undefined') {
   setMessage('Deploy mechs, merge them, then press Play Battle.');
   render();
 }
+
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {

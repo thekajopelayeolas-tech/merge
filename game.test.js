@@ -110,6 +110,17 @@ test('enemy count and stats scale with the battle level', () => {
   assert.ok(enemyStats(5).attack > enemyStats(4).attack);
 });
 
+test('battle result includes a replay of every round', () => {
+  const state = emptyState({ level: 2 });
+  state.board[0] = { id: 1, tier: 3 };
+  const result = startBattle(state);
+  assert.ok(result.battle.rounds.length > 0);
+  const first = result.battle.rounds[0];
+  assert.equal(first.shots.length, 1 + enemyCount(2));
+  assert.ok(first.shots.every((shot) => shot.damage > 0));
+  assert.ok(first.shots.some((shot) => shot.from.side === 'enemy'));
+});
+
 test('a battle with no mechs is rejected', () => {
   const state = emptyState();
   const result = startBattle(state);

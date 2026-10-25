@@ -83,6 +83,7 @@ header h1 {
 }
 
 .mech {
+  position: relative;
   width: 100%;
   height: 100%;
   display: flex;
@@ -188,4 +189,133 @@ button:disabled {
 
 .overlay-box button {
   margin-top: 12px;
+}
+
+.arena {
+  padding: 10px;
+  background: #1e293b;
+  border-radius: 14px;
+}
+
+.enemies {
+  display: flex;
+  justify-content: space-around;
+  gap: 6px;
+  min-height: 64px;
+}
+
+.enemy {
+  width: 72px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 6px;
+  border-radius: 10px;
+  background: #7f1d1d;
+  box-shadow: inset 0 -4px 0 rgba(0, 0, 0, 0.25);
+  animation: enemy-arrive 500ms ease-out backwards;
+  transition: opacity 400ms;
+}
+
+.enemy-name {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #fecaca;
+}
+
+.enemy .hp-bar {
+  width: 100%;
+}
+
+.mech .hp-bar {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+}
+
+.hp-bar {
+  height: 6px;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.hp-fill {
+  height: 100%;
+  background: #4ade80;
+  transition: width 300ms ease-out;
+}
+
+.hit {
+  filter: brightness(2.2);
+}
+
+.dead {
+  opacity: 0;
+  transition: opacity 400ms;
+}
+
+.board.shake {
+  animation: shake 300ms;
+}
+
+.fx {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.shot {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border-radius: 50%;
+}
+
+.mech-shot {
+  background: #facc15;
+  box-shadow: 0 0 10px #facc15, 0 0 20px #fb923c;
+}
+
+.enemy-shot {
+  background: #f87171;
+  box-shadow: 0 0 10px #ef4444, 0 0 20px #7f1d1d;
+}
+
+.dmg {
+  position: absolute;
+  font-size: 18px;
+  font-weight: 800;
+  color: #fef08a;
+  text-shadow: 0 2px 4px #000;
+  white-space: nowrap;
+}
+
+.banner {
+  position: absolute;
+  left: 50%;
+  top: 40%;
+  font-size: 56px;
+  font-weight: 900;
+  letter-spacing: 4px;
+  color: #fde047;
+  text-shadow: 0 0 20px #f97316, 0 4px 0 #000;
+  white-space: nowrap;
+}
+
+@keyframes enemy-arrive {
+  from { opacity: 0; transform: translateY(-40px) scale(0.8); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translate(0, 0); }
+  25% { transform: translate(-4px, 2px); }
+  50% { transform: translate(4px, -2px); }
+  75% { transform: translate(-2px, 3px); }
 }
