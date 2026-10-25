@@ -12,6 +12,7 @@
       <h1>Mech Merge</h1>
       <div class="stats">
         <div>Level <strong id="level">1</strong></div>
+        <div>Coins <strong id="coins">0</strong></div>
         <div>Turns <strong id="turns">0</strong></div>
         <div>Score <strong id="score">0</strong></div>
         <div>Merges <strong id="merges">0</strong></div>
@@ -27,9 +28,45 @@
     <div class="controls">
       <button id="deploy-btn" type="button">Deploy Mech (1 turn)</button>
       <button id="play-btn" type="button">Play Battle</button>
+      <button id="store-btn" type="button">Store</button>
     </div>
 
     <p id="message" class="message"></p>
+
+    <section id="store" class="store hidden">
+      <h2>Store</h2>
+      <div class="upgrade-row">
+        <div class="upgrade-info">
+          <strong class="upgrade-name" data-field="name"></strong>
+          <span class="upgrade-effect" data-field="effect"></span>
+        </div>
+        <span class="upgrade-level" data-field="level"></span>
+        <button type="button" data-buy="guns">Buy</button>
+      </div>
+      <div class="upgrade-row">
+        <div class="upgrade-info">
+          <strong class="upgrade-name" data-field="name"></strong>
+          <span class="upgrade-effect" data-field="effect"></span>
+        </div>
+        <span class="upgrade-level" data-field="level"></span>
+        <button type="button" data-buy="armour">Buy</button>
+      </div>
+      <div class="upgrade-row">
+        <div class="upgrade-info">
+          <strong class="upgrade-name" data-field="name"></strong>
+          <span class="upgrade-effect" data-field="effect"></span>
+        </div>
+        <span class="upgrade-level" data-field="level"></span>
+        <button type="button" data-buy="health">Buy</button>
+      </div>
+      <div class="upgrade-row">
+        <div class="upgrade-info">
+          <strong>Turn pack</strong>
+          <span class="upgrade-effect">+5 turns</span>
+        </div>
+        <button id="buy-turns-btn" type="button">Buy</button>
+      </div>
+    </section>
 
     <details class="guide">
       <summary>How to play</summary>

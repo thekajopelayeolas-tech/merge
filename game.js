@@ -14,6 +14,22 @@ const START_TURNS = 10;
 const START_MECHS = 2;
 const MAX_ENEMIES = 6;
 
+// Store settings. Coins come from battles and are spent on upgrades and turns.
+const COINS_PER_KILL = 5;
+const LEVEL_CLEAR_COINS = 25;
+const TURN_PACK_SIZE = 5;
+const TURN_PACK_COST = 15;
+const MAX_UPGRADE_LEVEL = 10;
+const GUN_BONUS = 3; // extra attack per mech, per level
+const ARMOUR_BONUS = 1; // damage blocked per enemy hit, per level
+const HEALTH_BONUS = 10; // extra max HP per mech, per level
+
+const UPGRADES = {
+  guns: { name: 'Guns', effect: `+${GUN_BONUS} attack per mech per level` },
+  armour: { name: 'Armour', effect: `-${ARMOUR_BONUS} damage per enemy hit per level` },
+  health: { name: 'Health', effect: `+${HEALTH_BONUS} max HP per mech per level` },
+};
+
 const MECH_TYPES = [
   null, // index 0 is unused so tier numbers match array indexes
   { name: 'Scout', color: '#7dd3fc' },
@@ -75,6 +91,8 @@ function createGame(rng = Math.random) {
     score: 0,
     merges: 0,
     level: 1,
+    coins: 0,
+    upgrades: { guns: 0, armour: 0, health: 0 },
     nextId: 1,
     status: 'playing',
   };
@@ -87,12 +105,46 @@ const fail = (reason) => ({ ok: false, reason });
 // Deploying and moving cost a turn. Battles do not.
 function checkCanAct(state) {
   if (state.status !== 'playing') return fail('The game is over.');
-  if (state.turnsLeft <= 0) return fail('No turns left. Press Play to fight for more.');
+  if (state.turnsLeft <= 0) return fail('No turns left. Buy more in the Store.');
   return null;
 }
 
 function spendTurn(state) {
   state.turnsLeft -= 1;
+}
+
+// Cost of the next level of an upgrade. Each level costs more than the last.
+function upgradeCost(level) {
+  return 20 * (level + 1);
+}
+
+function checkCanShop(state) {
+  if (state.status !== 'playing') return fail('The game is over.');
+  return null;
+}
+
+function buyUpgrade(state, key) {
+  const blocked = checkCanShop(state);
+  if (blocked) return blocked;
+  if (!UPGRADES[key]) return fail('Unknown upgrade.');
+  const level = state.upgrades[key];
+  if (level >= MAX_UPGRADE_LEVEL) return fail(`${UPGRADES[key].name} is already maxed out.`);
+  const cost = upgradeCost(level);
+  if (state.coins < cost) return fail(`You need ${cost} coins for that upgrade.`);
+  state.coins -= cost;
+  state.upgrades[key] += 1;
+  return { ok: true, level: state.upgrades[key] };
+}
+
+function buyTurns(state) {
+  const blocked = checkCanShop(state);
+  if (blocked) return blocked;
+  if (state.coins < TURN_PACK_COST) {
+    return fail(`You need ${TURN_PACK_COST} coins for more turns.`);
+  }
+  state.coins -= TURN_PACK_COST;
+  state.turnsLeft += TURN_PACK_SIZE;
+  return { ok: true };
 }
 
 function deployMech(state, rng = Math.random) {
@@ -140,12 +192,19 @@ function moveMech(state, from, to) {
 }
 
 // Every mech is fully repaired before each battle.
-function createMechUnits(board) {
+function createMechUnits(board, upgrades) {
   const units = [];
   board.forEach((mech, index) => {
     if (!mech) return;
-    const { hp, attack } = mechStats(mech.tier);
-    units.push({ index, hp, attack });
+    const base = mechStats(mech.tier);
+    const maxHp = base.hp + upgrades.health * HEALTH_BONUS;
+    units.push({
+      index,
+      hp: maxHp,
+      maxHp,
+      attack: base.attack + upgrades.guns * GUN_BONUS,
+      armour: upgrades.armour * ARMOUR_BONUS,
+    });
   });
   return units;
 }
@@ -170,7 +229,11 @@ function simulateBattle(mechUnits, enemies) {
     const enemyTarget = liveEnemies[0];
     const mechTarget = liveMechs[0];
     const damageToEnemy = liveMechs.reduce((sum, unit) => sum + unit.attack, 0);
-    const damageToMech = liveEnemies.reduce((sum, enemy) => sum + enemy.attack, 0);
+    // Armour blocks part of each hit, but every hit still does at least 1 damage.
+    const enemyHits = liveEnemies.map((enemy) => ({
+      enemy,
+      damage: Math.max(1, enemy.attack - mechTarget.armour),
+    }));
 
     const shots = [
       ...liveMechs.map((unit) => ({
@@ -178,15 +241,15 @@ function simulateBattle(mechUnits, enemies) {
         to: { side: 'enemy', index: enemyTarget.index },
         damage: unit.attack,
       })),
-      ...liveEnemies.map((enemy) => ({
+      ...enemyHits.map(({ enemy, damage }) => ({
         from: { side: 'enemy', index: enemy.index },
         to: { side: 'mech', index: mechTarget.index },
-        damage: enemy.attack,
+        damage,
       })),
     ];
 
     enemyTarget.hp -= damageToEnemy;
-    mechTarget.hp -= damageToMech;
+    mechTarget.hp -= enemyHits.reduce((sum, hit) => sum + hit.damage, 0);
     const downs = [];
     if (enemyTarget.hp <= 0) downs.push({ side: 'enemy', index: enemyTarget.index });
     if (mechTarget.hp <= 0) downs.push({ side: 'mech', index: mechTarget.index });
@@ -198,7 +261,7 @@ function simulateBattle(mechUnits, enemies) {
 // Clearing every enemy wins the level. If any enemy survives, the run ends.
 function startBattle(state) {
   if (state.status !== 'playing') return fail('The game is over.');
-  const mechUnits = createMechUnits(state.board);
+  const mechUnits = createMechUnits(state.board, state.upgrades);
   if (mechUnits.length === 0) {
     return fail('Deploy a mech before starting a battle.');
   }
@@ -213,9 +276,21 @@ function startBattle(state) {
     if (unit.hp <= 0) state.board[unit.index] = null;
   });
 
-  state.turnsLeft += kills;
   const won = kills === enemies.length;
-  const battle = { level: state.level, enemyCount: enemies.length, kills, losses, won, rounds };
+  const coinsEarned = kills * COINS_PER_KILL + (won ? LEVEL_CLEAR_COINS : 0);
+  state.turnsLeft += kills;
+  state.coins += coinsEarned;
+  const mechs = mechUnits.map((unit) => ({ index: unit.index, maxHp: unit.maxHp }));
+  const battle = {
+    level: state.level,
+    enemyCount: enemies.length,
+    kills,
+    losses,
+    won,
+    rounds,
+    mechs,
+    coinsEarned,
+  };
   state.lastBattle = battle;
 
   if (!won) {
@@ -234,6 +309,10 @@ if (typeof document !== 'undefined') {
   const enemiesEl = document.getElementById('enemies');
   const fxEl = document.getElementById('fx');
   const levelEl = document.getElementById('level');
+  const coinsEl = document.getElementById('coins');
+  const storeEl = document.getElementById('store');
+  const storeBtn = document.getElementById('store-btn');
+  const buyTurnsBtn = document.getElementById('buy-turns-btn');
   const turnsEl = document.getElementById('turns');
   const scoreEl = document.getElementById('score');
   const mergesEl = document.getElementById('merges');
@@ -498,10 +577,8 @@ if (typeof document !== 'undefined') {
     enemyMax = enemyStats(battle.level).hp;
     enemyHp = Array(battle.enemyCount).fill(enemyMax);
     mechHp = {};
-    snapshot.forEach((mech, index) => {
-      if (!mech) return;
-      const { hp } = mechStats(mech.tier);
-      mechHp[index] = { hp, max: hp };
+    battle.mechs.forEach(({ index, maxHp }) => {
+      mechHp[index] = { hp: maxHp, max: maxHp };
     });
 
     render();
@@ -541,6 +618,7 @@ if (typeof document !== 'undefined') {
     arenaEl.classList.toggle('hidden', !busy);
 
     levelEl.textContent = state.level;
+    coinsEl.textContent = state.coins;
     turnsEl.textContent = state.turnsLeft;
     scoreEl.textContent = state.score;
     mergesEl.textContent = state.merges;
@@ -550,8 +628,49 @@ if (typeof document !== 'undefined') {
     const hasMechs = countMechs(state.board) > 0;
     deployBtn.disabled = !playing || boardFull || state.turnsLeft <= 0;
     playBtn.disabled = !playing || !hasMechs;
+    storeBtn.disabled = busy;
+    renderStore();
     renderOverlay();
   }
+
+  function renderStore() {
+    storeEl.querySelectorAll('[data-buy]').forEach((button) => {
+      const key = button.dataset.buy;
+      const row = button.closest('.upgrade-row');
+      const level = state.upgrades[key];
+      const info = UPGRADES[key];
+      row.querySelector('[data-field="name"]').textContent = info.name;
+      row.querySelector('[data-field="effect"]').textContent = info.effect;
+      row.querySelector('[data-field="level"]').textContent =
+        level >= MAX_UPGRADE_LEVEL ? 'MAX' : `Lv ${level} → ${level + 1}`;
+      button.textContent = level >= MAX_UPGRADE_LEVEL ? 'Maxed' : `${upgradeCost(level)} coins`;
+      button.disabled = busy || state.status !== 'playing' || level >= MAX_UPGRADE_LEVEL
+        || state.coins < upgradeCost(level);
+    });
+    buyTurnsBtn.textContent = `${TURN_PACK_COST} coins`;
+    buyTurnsBtn.disabled = busy || state.status !== 'playing' || state.coins < TURN_PACK_COST;
+  }
+
+  function buyFromStore(result) {
+    if (result.ok) {
+      setMessage('Purchase complete.');
+    } else {
+      setMessage(result.reason, true);
+    }
+    render();
+  }
+
+  storeBtn.addEventListener('click', () => {
+    storeEl.classList.toggle('hidden');
+    render();
+  });
+
+  storeEl.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-buy]');
+    if (button) buyFromStore(buyUpgrade(state, button.dataset.buy));
+  });
+
+  buyTurnsBtn.addEventListener('click', () => buyFromStore(buyTurns(state)));
 
   deployBtn.addEventListener('click', () => {
     const result = deployMech(state);
@@ -578,12 +697,13 @@ if (typeof document !== 'undefined') {
     const { level, kills, losses, won } = result.battle;
     const bonus = kills === 1 ? '1 turn' : `${kills} turns`;
     const lossText = losses === 1 ? '1 mech lost' : `${losses} mechs lost`;
+    const coinText = `+${result.battle.coinsEarned} coins`;
     if (!won) {
       setMessage(`Level ${level} lost. You destroyed ${kills} enemies and ${lossText}.`, true);
     } else if (state.status === 'won') {
-      setMessage(`Level ${level} cleared! ${lossText}. Earned ${bonus}.`);
+      setMessage(`Level ${level} cleared! ${lossText}. Earned ${bonus} and ${coinText}.`);
     } else {
-      setMessage(`Level ${level} cleared! ${lossText}. Earned ${bonus}. Now level ${state.level}.`);
+      setMessage(`Level ${level} cleared! ${lossText}. Earned ${bonus} and ${coinText}. Now level ${state.level}.`);
     }
     await playBattle(snapshot, result.battle);
     render();
@@ -607,6 +727,9 @@ if (typeof module !== 'undefined' && module.exports) {
     deployMech,
     moveMech,
     startBattle,
+    buyUpgrade,
+    buyTurns,
+    upgradeCost,
     mergeScore,
     enemyCount,
     enemyStats,
@@ -616,6 +739,14 @@ if (typeof module !== 'undefined' && module.exports) {
     START_TURNS,
     CELL_COUNT,
     MECH_TYPES,
+    UPGRADES,
+    MAX_UPGRADE_LEVEL,
+    TURN_PACK_SIZE,
+    TURN_PACK_COST,
+    COINS_PER_KILL,
+    LEVEL_CLEAR_COINS,
+    GUN_BONUS,
+    HEALTH_BONUS,
   };
 }
 

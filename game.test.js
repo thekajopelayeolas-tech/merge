@@ -5,13 +5,23 @@ const {
   deployMech,
   moveMech,
   startBattle,
+  buyUpgrade,
+  buyTurns,
+  upgradeCost,
   mergeScore,
   enemyCount,
   enemyStats,
   mechStats,
   MAX_TIER,
   MAX_LEVEL,
+  MAX_UPGRADE_LEVEL,
   START_TURNS,
+  TURN_PACK_SIZE,
+  TURN_PACK_COST,
+  COINS_PER_KILL,
+  LEVEL_CLEAR_COINS,
+  GUN_BONUS,
+  HEALTH_BONUS,
   CELL_COUNT,
 } = require('./game.js');
 
@@ -119,6 +129,91 @@ test('battle result includes a replay of every round', () => {
   assert.equal(first.shots.length, 1 + enemyCount(2));
   assert.ok(first.shots.every((shot) => shot.damage > 0));
   assert.ok(first.shots.some((shot) => shot.from.side === 'enemy'));
+});
+
+test('upgrade costs rise with each level', () => {
+  assert.equal(upgradeCost(0), 20);
+  assert.ok(upgradeCost(1) > upgradeCost(0));
+});
+
+test('buyUpgrade spends coins and raises the level', () => {
+  const state = emptyState({ coins: 100 });
+  const result = buyUpgrade(state, 'guns');
+  assert.equal(result.ok, true);
+  assert.equal(state.upgrades.guns, 1);
+  assert.equal(state.coins, 100 - upgradeCost(0));
+});
+
+test('buyUpgrade rejects an upgrade you cannot afford', () => {
+  const state = emptyState({ coins: 5 });
+  assert.equal(buyUpgrade(state, 'health').ok, false);
+  assert.equal(state.upgrades.health, 0);
+  assert.equal(state.coins, 5);
+});
+
+test('buyUpgrade rejects unknown keys and maxed upgrades', () => {
+  const state = emptyState({ coins: 100000 });
+  assert.equal(buyUpgrade(state, 'speed').ok, false);
+  state.upgrades.armour = MAX_UPGRADE_LEVEL;
+  assert.equal(buyUpgrade(state, 'armour').ok, false);
+  assert.equal(state.coins, 100000);
+});
+
+test('buyTurns adds a turn pack for coins', () => {
+  const state = emptyState({ coins: TURN_PACK_COST });
+  const result = buyTurns(state);
+  assert.equal(result.ok, true);
+  assert.equal(state.turnsLeft, START_TURNS + TURN_PACK_SIZE);
+  assert.equal(state.coins, 0);
+});
+
+test('buyTurns fails without enough coins', () => {
+  const state = emptyState({ coins: TURN_PACK_COST - 1 });
+  assert.equal(buyTurns(state).ok, false);
+  assert.equal(state.turnsLeft, START_TURNS);
+});
+
+test('store purchases are blocked after the game is over', () => {
+  const state = emptyState({ coins: 1000, status: 'lost' });
+  assert.equal(buyUpgrade(state, 'guns').ok, false);
+  assert.equal(buyTurns(state).ok, false);
+});
+
+test('a battle pays coins for kills and for clearing the level', () => {
+  const state = emptyState();
+  state.board[0] = { id: 1, tier: MAX_TIER };
+  const result = startBattle(state);
+  const expected = result.battle.kills * COINS_PER_KILL + (result.battle.won ? LEVEL_CLEAR_COINS : 0);
+  assert.equal(result.battle.coinsEarned, expected);
+  assert.equal(state.coins, expected);
+});
+
+test('the Guns upgrade increases mech attack in battle', () => {
+  const plain = emptyState();
+  plain.board[0] = { id: 1, tier: 1 };
+  const boosted = emptyState({ upgrades: { guns: 5, armour: 0, health: 0 } });
+  boosted.board[0] = { id: 1, tier: 1 };
+  const first = startBattle(plain).battle.rounds[0];
+  const second = startBattle(boosted).battle.rounds[0];
+  const plainShot = first.shots.find((shot) => shot.from.side === 'mech');
+  const boostedShot = second.shots.find((shot) => shot.from.side === 'mech');
+  assert.equal(boostedShot.damage, plainShot.damage + 5 * GUN_BONUS);
+});
+
+test('the Health upgrade raises max HP reported to the replay', () => {
+  const state = emptyState({ upgrades: { guns: 0, armour: 0, health: 4 } });
+  state.board[0] = { id: 1, tier: 2 };
+  const result = startBattle(state);
+  assert.equal(result.battle.mechs[0].maxHp, mechStats(2).hp + 4 * HEALTH_BONUS);
+});
+
+test('the Armour upgrade reduces damage taken but never below 1', () => {
+  const state = emptyState({ level: 1, upgrades: { guns: 0, armour: MAX_UPGRADE_LEVEL, health: 0 } });
+  state.board[0] = { id: 1, tier: 1 };
+  const result = startBattle(state);
+  const enemyShots = result.battle.rounds[0].shots.filter((shot) => shot.from.side === 'enemy');
+  assert.ok(enemyShots.every((shot) => shot.damage >= 1));
+  assert.ok(enemyShots.every((shot) => shot.damage < enemyStats(1).attack));
 });
 
 test('a battle with no mechs is rejected', () => {

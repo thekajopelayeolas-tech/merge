@@ -296,6 +296,58 @@ button:disabled {
   white-space: nowrap;
 }
 
+#store-btn {
+  background: #facc15;
+}
+
+.store {
+  padding: 12px;
+  background: #1e293b;
+  border-radius: 14px;
+}
+
+.store h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+  text-align: center;
+}
+
+.upgrade-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid #334155;
+}
+
+.upgrade-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.upgrade-effect {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.upgrade-level {
+  font-size: 13px;
+  color: #e2e8f0;
+  white-space: nowrap;
+}
+
+.upgrade-row button {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+#buy-turns-btn {
+  background: #4ade80;
+}
+
 .banner {
   position: absolute;
   left: 50%;
