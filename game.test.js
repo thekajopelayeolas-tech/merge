@@ -4,9 +4,14 @@ const {
   createGame,
   deployMech,
   moveMech,
+  startBattle,
   mergeScore,
+  enemyCount,
+  enemyStats,
+  mechStats,
   MAX_TIER,
-  MAX_TURNS,
+  MAX_LEVEL,
+  START_TURNS,
   CELL_COUNT,
 } = require('./game.js');
 
@@ -22,12 +27,12 @@ function emptyState(overrides = {}) {
 
 const countMechs = (state) => state.board.filter(Boolean).length;
 
-test('new game starts with two mechs, full turns, and playing status', () => {
+test('new game starts with two mechs, full turns, level 1, and playing status', () => {
   const state = createGame(fixedRng);
   assert.equal(countMechs(state), 2);
-  assert.equal(state.turnsLeft, MAX_TURNS);
+  assert.equal(state.turnsLeft, START_TURNS);
+  assert.equal(state.level, 1);
   assert.equal(state.status, 'playing');
-  assert.equal(state.score, 0);
 });
 
 test('deployMech adds a mech and spends one turn', () => {
@@ -35,7 +40,7 @@ test('deployMech adds a mech and spends one turn', () => {
   const result = deployMech(state, fixedRng);
   assert.equal(result.ok, true);
   assert.equal(countMechs(state), 1);
-  assert.equal(state.turnsLeft, MAX_TURNS - 1);
+  assert.equal(state.turnsLeft, START_TURNS - 1);
 });
 
 test('deployMech fails on a full board without spending a turn', () => {
@@ -43,7 +48,7 @@ test('deployMech fails on a full board without spending a turn', () => {
   state.board = state.board.map((_, i) => ({ id: i + 1, tier: 1 }));
   const result = deployMech(state, fixedRng);
   assert.equal(result.ok, false);
-  assert.equal(state.turnsLeft, MAX_TURNS);
+  assert.equal(state.turnsLeft, START_TURNS);
 });
 
 test('moveMech moves a mech into an empty cell', () => {
@@ -53,7 +58,7 @@ test('moveMech moves a mech into an empty cell', () => {
   assert.equal(result.type, 'move');
   assert.equal(state.board[0], null);
   assert.deepEqual(state.board[7], { id: 1, tier: 2 });
-  assert.equal(state.turnsLeft, MAX_TURNS - 1);
+  assert.equal(state.turnsLeft, START_TURNS - 1);
 });
 
 test('merging same-tier mechs raises the tier and updates score and merges', () => {
@@ -67,7 +72,6 @@ test('merging same-tier mechs raises the tier and updates score and merges', () 
   assert.equal(state.board[1].tier, 3);
   assert.equal(state.merges, 1);
   assert.equal(state.score, mergeScore(3));
-  assert.equal(state.turnsLeft, MAX_TURNS - 1);
 });
 
 test('moving onto a different tier swaps the two mechs', () => {
@@ -81,30 +85,74 @@ test('moving onto a different tier swaps the two mechs', () => {
   assert.equal(state.merges, 0);
 });
 
+test('two Titans cannot merge into anything higher', () => {
+  const state = emptyState();
+  state.board[0] = { id: 1, tier: MAX_TIER };
+  state.board[1] = { id: 2, tier: MAX_TIER };
+  const result = moveMech(state, 0, 1);
+  assert.equal(result.ok, false);
+  assert.equal(state.turnsLeft, START_TURNS);
+});
+
 test('moveMech rejects an empty source cell and a same-cell move', () => {
   const state = emptyState();
   state.board[3] = { id: 1, tier: 1 };
   assert.equal(moveMech(state, 0, 1).ok, false);
   assert.equal(moveMech(state, 3, 3).ok, false);
-  assert.equal(state.turnsLeft, MAX_TURNS);
+  assert.equal(state.turnsLeft, START_TURNS);
 });
 
-test('creating a Titan wins the game', () => {
+test('enemy count and stats scale with the battle level', () => {
+  assert.equal(enemyCount(1), 2);
+  assert.equal(enemyCount(3), 4);
+  assert.equal(enemyCount(50), 6);
+  assert.ok(enemyStats(5).hp > enemyStats(4).hp);
+  assert.ok(enemyStats(5).attack > enemyStats(4).attack);
+});
+
+test('a battle with no mechs is rejected', () => {
   const state = emptyState();
-  state.board[0] = { id: 1, tier: MAX_TIER - 1 };
-  state.board[1] = { id: 2, tier: MAX_TIER - 1 };
-  moveMech(state, 0, 1);
-  assert.equal(state.board[1].tier, MAX_TIER);
-  assert.equal(state.status, 'won');
+  const result = startBattle(state);
+  assert.equal(result.ok, false);
+  assert.equal(state.level, 1);
 });
 
-test('running out of turns loses the game', () => {
-  const state = emptyState({ turnsLeft: 1 });
+test('a strong army wins the battle, clears the level, and earns a turn per kill', () => {
+  const state = emptyState();
+  state.board[0] = { id: 1, tier: MAX_TIER };
+  const before = state.turnsLeft;
+  const result = startBattle(state);
+  assert.equal(result.ok, true);
+  assert.equal(result.battle.won, true);
+  assert.equal(result.battle.kills, enemyCount(1));
+  assert.equal(state.turnsLeft, before + result.battle.kills);
+  assert.equal(state.level, 2);
+  assert.equal(state.status, 'playing');
+});
+
+test('a weak army loses the battle and the run ends', () => {
+  const state = emptyState({ level: 5 });
   state.board[0] = { id: 1, tier: 1 };
-  state.board[1] = { id: 2, tier: 2 };
-  moveMech(state, 0, 1);
-  assert.equal(state.turnsLeft, 0);
+  const result = startBattle(state);
+  assert.equal(result.battle.won, false);
   assert.equal(state.status, 'lost');
+  assert.equal(state.level, 5);
+});
+
+test('mechs that die in battle leave the hangar', () => {
+  const state = emptyState({ level: 3 });
+  state.board[0] = { id: 1, tier: 1 };
+  state.board[1] = { id: 2, tier: MAX_TIER };
+  startBattle(state);
+  assert.ok(countMechs(state) < 2);
+});
+
+test('clearing the final level wins the game', () => {
+  const state = emptyState({ level: MAX_LEVEL });
+  state.board = state.board.map((_, i) => ({ id: i + 1, tier: MAX_TIER }));
+  const result = startBattle(state);
+  assert.equal(result.battle.won, true);
+  assert.equal(state.status, 'won');
 });
 
 test('no actions are allowed after the game is over', () => {
@@ -112,7 +160,12 @@ test('no actions are allowed after the game is over', () => {
   state.board[0] = { id: 1, tier: 1 };
   assert.equal(deployMech(state, fixedRng).ok, false);
   assert.equal(moveMech(state, 0, 1).ok, false);
-  assert.equal(state.turnsLeft, MAX_TURNS);
+  assert.equal(startBattle(state).ok, false);
+});
+
+test('mech stats grow with tier', () => {
+  assert.ok(mechStats(3).hp > mechStats(2).hp);
+  assert.ok(mechStats(3).attack > mechStats(2).attack);
 });
 
 test('mergeScore doubles with each tier', () => {

@@ -136,6 +136,10 @@ button:disabled {
   cursor: not-allowed;
 }
 
+#play-btn {
+  background: #4ade80;
+}
+
 .message {
   min-height: 20px;
   margin: 0;

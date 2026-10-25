@@ -1,14 +1,18 @@
 /*
  * Mech Merge
- * Core rules are plain functions that mutate a state object, so they can be
- * unit tested with Node (see game.test.js). The DOM code only runs in a browser.
+ * Merge mechs in your hangar to build an army, then press Play to fight.
+ * Enemy level always matches your current level.
+ * Rules are plain functions so they can be unit tested with Node (see
+ * game.test.js). The DOM code only runs in a browser.
  */
 
 const GRID_SIZE = 5;
 const CELL_COUNT = GRID_SIZE * GRID_SIZE;
-const MAX_TIER = 6; // Reaching this tier (Titan) wins the game
-const MAX_TURNS = 60;
+const MAX_TIER = 6; // Highest mech tier (Titan)
+const MAX_LEVEL = 10; // Clearing this level wins the game
+const START_TURNS = 10;
 const START_MECHS = 2;
+const MAX_ENEMIES = 6;
 
 const MECH_TYPES = [
   null, // index 0 is unused so tier numbers match array indexes
@@ -19,6 +23,19 @@ const MECH_TYPES = [
   { name: 'Juggernaut', color: '#f87171' },
   { name: 'Titan', color: '#c084fc' },
 ];
+
+// A mech's power comes from its tier. Enemies scale with the battle level.
+function mechStats(tier) {
+  return { hp: 20 * tier, attack: 5 * tier };
+}
+
+function enemyStats(level) {
+  return { hp: 15 * level, attack: 4 * level };
+}
+
+function enemyCount(level) {
+  return Math.min(level + 1, MAX_ENEMIES);
+}
 
 function mergeScore(newTier) {
   return 10 * 2 ** newTier;
@@ -39,13 +56,8 @@ function emptyIndexes(board) {
   return result;
 }
 
-function updateStatus(state) {
-  if (state.status !== 'playing') return;
-  if (state.board.some((mech) => mech && mech.tier === MAX_TIER)) {
-    state.status = 'won';
-  } else if (state.turnsLeft <= 0) {
-    state.status = 'lost';
-  }
+function countMechs(board) {
+  return board.filter(Boolean).length;
 }
 
 function placeRandomMech(state, rng) {
@@ -59,9 +71,10 @@ function placeRandomMech(state, rng) {
 function createGame(rng = Math.random) {
   const state = {
     board: Array(CELL_COUNT).fill(null),
-    turnsLeft: MAX_TURNS,
+    turnsLeft: START_TURNS,
     score: 0,
     merges: 0,
+    level: 1,
     nextId: 1,
     status: 'playing',
   };
@@ -71,13 +84,20 @@ function createGame(rng = Math.random) {
 
 const fail = (reason) => ({ ok: false, reason });
 
+// Deploying and moving cost a turn. Battles do not.
+function checkCanAct(state) {
+  if (state.status !== 'playing') return fail('The game is over.');
+  if (state.turnsLeft <= 0) return fail('No turns left. Press Play to fight for more.');
+  return null;
+}
+
 function spendTurn(state) {
   state.turnsLeft -= 1;
-  updateStatus(state);
 }
 
 function deployMech(state, rng = Math.random) {
-  if (state.status !== 'playing') return fail('The game is over.');
+  const blocked = checkCanAct(state);
+  if (blocked) return blocked;
   if (emptyIndexes(state.board).length === 0) {
     return fail('The hangar is full. Merge some mechs first.');
   }
@@ -87,12 +107,17 @@ function deployMech(state, rng = Math.random) {
 }
 
 function moveMech(state, from, to) {
-  if (state.status !== 'playing') return fail('The game is over.');
+  const blocked = checkCanAct(state);
+  if (blocked) return blocked;
   const source = state.board[from];
   if (!source) return fail('There is no mech in that cell.');
   if (from === to) return fail('Pick a different cell.');
 
   const target = state.board[to];
+  if (target && target.tier === source.tier && source.tier >= MAX_TIER) {
+    return fail('Titans are already the highest tier.');
+  }
+
   let result;
   if (!target) {
     state.board[to] = source;
@@ -114,12 +139,80 @@ function moveMech(state, from, to) {
   return result;
 }
 
+// Every mech is fully repaired before each battle.
+function createMechUnits(board) {
+  const units = [];
+  board.forEach((mech, index) => {
+    if (!mech) return;
+    const { hp, attack } = mechStats(mech.tier);
+    units.push({ index, hp, attack });
+  });
+  return units;
+}
+
+function createEnemies(level) {
+  const { hp, attack } = enemyStats(level);
+  return Array.from({ length: enemyCount(level) }, () => ({ hp, attack }));
+}
+
+// Each round both sides strike at once. Your army focuses the front enemy,
+// and the enemies focus your front mech. Extra damage on a dead target is wasted.
+// Every round deals damage, so the loop always ends.
+function simulateBattle(mechUnits, enemies) {
+  for (;;) {
+    const liveMechs = mechUnits.filter((unit) => unit.hp > 0);
+    const liveEnemies = enemies.filter((enemy) => enemy.hp > 0);
+    if (liveMechs.length === 0 || liveEnemies.length === 0) return;
+
+    const damageToEnemy = liveMechs.reduce((sum, unit) => sum + unit.attack, 0);
+    const damageToMech = liveEnemies.reduce((sum, enemy) => sum + enemy.attack, 0);
+    liveEnemies[0].hp -= damageToEnemy;
+    liveMechs[0].hp -= damageToMech;
+  }
+}
+
+// Fights the current level. Each enemy killed gives one turn.
+// Clearing every enemy wins the level. If any enemy survives, the run ends.
+function startBattle(state) {
+  if (state.status !== 'playing') return fail('The game is over.');
+  const mechUnits = createMechUnits(state.board);
+  if (mechUnits.length === 0) {
+    return fail('Deploy a mech before starting a battle.');
+  }
+
+  const enemies = createEnemies(state.level);
+  simulateBattle(mechUnits, enemies);
+
+  const kills = enemies.filter((enemy) => enemy.hp <= 0).length;
+  const losses = mechUnits.filter((unit) => unit.hp <= 0).length;
+  // Destroyed mechs leave the hangar. Survivors stay where they are.
+  mechUnits.forEach((unit) => {
+    if (unit.hp <= 0) state.board[unit.index] = null;
+  });
+
+  state.turnsLeft += kills;
+  const won = kills === enemies.length;
+  const battle = { level: state.level, kills, losses, won };
+  state.lastBattle = battle;
+
+  if (!won) {
+    state.status = 'lost';
+  } else if (state.level >= MAX_LEVEL) {
+    state.status = 'won';
+  } else {
+    state.level += 1;
+  }
+  return { ok: true, battle };
+}
+
 if (typeof document !== 'undefined') {
   const boardEl = document.getElementById('board');
+  const levelEl = document.getElementById('level');
   const turnsEl = document.getElementById('turns');
   const scoreEl = document.getElementById('score');
   const mergesEl = document.getElementById('merges');
   const deployBtn = document.getElementById('deploy-btn');
+  const playBtn = document.getElementById('play-btn');
   const messageEl = document.getElementById('message');
   const overlayEl = document.getElementById('overlay');
   const overlayTitle = document.getElementById('overlay-title');
@@ -214,11 +307,11 @@ if (typeof document !== 'undefined') {
     }
     overlayEl.classList.remove('hidden');
     if (state.status === 'won') {
-      overlayTitle.textContent = 'Titan Built!';
-      overlayText.textContent = `You won with ${state.turnsLeft} turns left. Score: ${state.score}`;
+      overlayTitle.textContent = 'Victory!';
+      overlayText.textContent = `You cleared level ${state.level} and won the campaign. Score: ${state.score}`;
     } else {
-      overlayTitle.textContent = 'Out of Turns';
-      overlayText.textContent = `Score: ${state.score} · Merges: ${state.merges}`;
+      overlayTitle.textContent = 'Defeated';
+      overlayText.textContent = `You fell on level ${state.level}. Score: ${state.score} · Merges: ${state.merges}`;
     }
   }
 
@@ -230,13 +323,16 @@ if (typeof document !== 'undefined') {
       boardEl.appendChild(cell);
     });
 
+    levelEl.textContent = state.level;
     turnsEl.textContent = state.turnsLeft;
     scoreEl.textContent = state.score;
     mergesEl.textContent = state.merges;
 
     const playing = state.status === 'playing';
     const boardFull = emptyIndexes(state.board).length === 0;
-    deployBtn.disabled = !playing || boardFull;
+    const hasMechs = countMechs(state.board) > 0;
+    deployBtn.disabled = !playing || boardFull || state.turnsLeft <= 0;
+    playBtn.disabled = !playing || !hasMechs;
     renderOverlay();
   }
 
@@ -251,14 +347,34 @@ if (typeof document !== 'undefined') {
     render();
   });
 
-  restartBtn.addEventListener('click', () => {
-    state = createGame();
+  playBtn.addEventListener('click', () => {
+    const result = startBattle(state);
     selected = null;
-    setMessage('New game started.');
+    if (!result.ok) {
+      setMessage(result.reason, true);
+    } else {
+      const { level, kills, losses, won } = result.battle;
+      const bonus = kills === 1 ? '1 turn' : `${kills} turns`;
+      const lossText = losses === 1 ? '1 mech lost' : `${losses} mechs lost`;
+      if (!won) {
+        setMessage(`Level ${level} lost. You destroyed ${kills} enemies and ${lossText}.`, true);
+      } else if (state.status === 'won') {
+        setMessage(`Level ${level} cleared! ${lossText}. Earned ${bonus}.`);
+      } else {
+        setMessage(`Level ${level} cleared! ${lossText}. Earned ${bonus}. Now level ${state.level}.`);
+      }
+    }
     render();
   });
 
-  setMessage('Click one mech, then click another to merge. Build a Titan!');
+  restartBtn.addEventListener('click', () => {
+    state = createGame();
+    selected = null;
+    setMessage('New campaign started.');
+    render();
+  });
+
+  setMessage('Deploy mechs, merge them, then press Play Battle.');
   render();
 }
 
@@ -267,9 +383,14 @@ if (typeof module !== 'undefined' && module.exports) {
     createGame,
     deployMech,
     moveMech,
+    startBattle,
     mergeScore,
+    enemyCount,
+    enemyStats,
+    mechStats,
     MAX_TIER,
-    MAX_TURNS,
+    MAX_LEVEL,
+    START_TURNS,
     CELL_COUNT,
     MECH_TYPES,
   };

@@ -11,6 +11,7 @@
     <header>
       <h1>Mech Merge</h1>
       <div class="stats">
+        <div>Level <strong id="level">1</strong></div>
         <div>Turns <strong id="turns">0</strong></div>
         <div>Score <strong id="score">0</strong></div>
         <div>Merges <strong id="merges">0</strong></div>
@@ -21,6 +22,7 @@
 
     <div class="controls">
       <button id="deploy-btn" type="button">Deploy Mech (1 turn)</button>
+      <button id="play-btn" type="button">Play Battle</button>
     </div>
 
     <p id="message" class="message"></p>
@@ -28,10 +30,12 @@
     <details class="guide">
       <summary>How to play</summary>
       <ul>
-        <li>Click a mech, then click another cell to move, swap, or merge.</li>
-        <li>Two mechs of the same tier merge into the next tier.</li>
-        <li>Every action costs one turn.</li>
-        <li>Build a <strong>Titan</strong> (tier 6) before turns run out to win.</li>
+        <li>Deploy mechs and merge matching tiers to make your army stronger.</li>
+        <li>Click a mech, then click another cell to move, swap, or merge. Each move costs one turn.</li>
+        <li>Press <strong>Play Battle</strong> to fight the level's enemies.</li>
+        <li>Each enemy you destroy gives you one extra turn.</li>
+        <li>Enemies match your level. Clear every enemy to advance.</li>
+        <li>Clear level <strong>10</strong> to win. If any enemy survives, the run ends.</li>
       </ul>
     </details>
   </main>
